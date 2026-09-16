@@ -25,8 +25,14 @@ app.get('/', (req, res) => {
     res.status(500).send('index.html introuvable dans public/ — vérifie que ce dossier a bien été déployé (git add public/).');
 });
 
-// Compteur simple de sessions générées avec succès, réinitialisé à chaque
-// redémarrage du serveur (pas de base de données ici).
+// Compteur de sessions WhatsApp générées avec succès (pairing réussi),
+// réinitialisé à chaque redémarrage du serveur (pas de base de données ici).
+// Limite importante : ce serveur ne voit QUE la génération de la session, pas
+// ce qui se passe ensuite. Il ne peut pas savoir si la personne a réellement
+// déployé cette session sur un bot (v1/v2) qui tourne quelque part — ça se
+// passe sur un tout autre serveur (Katabump, Bot-Hosting, Téo Héberg...) sans
+// lien avec celui-ci. "Sessions connectées" ici veut donc dire "connectées à
+// WhatsApp pendant la génération", pas "bot actif avec cette session".
 let connectedCount = 0;
 app.get('/api/stats', (req, res) => {
     res.json({ connected: connectedCount });
@@ -80,6 +86,8 @@ app.post('/api/session/start', async (req, res) => {
         `│ *Canal Telegram :* https://t.me/akane_md`
     );
 
+    const CHANNEL_LINK = 'https://whatsapp.com/channel/0029Vb865EJ0QeapgV7MkP2D';
+
     // Fonction récursive : après le code de pairing, WhatsApp ferme souvent la
     // connexion avec le code "restartRequired" (515) — ce n'est PAS une erreur,
     // c'est une étape normale du flow qui attend une seconde connexion
@@ -118,6 +126,12 @@ app.post('/api/session/start', async (req, res) => {
             const current = sessions.get(id);
             if (!current) return;
 
+            // Log serveur détaillé pour diagnostiquer si "aucun message" revient
+            // encore — regarde ces logs après un essai pour voir où ça coince
+            // réellement (jamais "open" ? boucle "restartRequired" en continu ?).
+            const statusCode = lastDisconnect?.error?.output?.statusCode;
+            console.log(`[session ${id}] connection=${connection}${statusCode ? ' statusCode=' + statusCode : ''}${isReconnect ? ' (reco)' : ''}`);
+
             if (connection === 'open') {
                 try {
                     // L'ID de session encode les identifiants d'authentification.
@@ -127,17 +141,41 @@ app.post('/api/session/start', async (req, res) => {
                     const sessionId = 'AKANE~' + Buffer.from(JSON.stringify(state.creds)).toString('base64');
                     current.sessionId = sessionId;
 
-                    // 1) Message de bienvenue avec photo + cadre stylé + liens.
-                    await sock.sendMessage(sock.user.id, {
-                        image: { url: CONFIRMATION_PHOTO },
-                        caption: CONFIRMATION_MESSAGE
-                    });
+                    // 1) Message de bienvenue avec photo + cadre stylé + liens,
+                    // avec un vrai bouton natif WhatsApp vers la chaîne. Si le
+                    // format "interactiveButtons" n'est pas supporté par cette
+                    // version de Baileys, on retombe sur l'image simple pour
+                    // que le contenu parte quand même.
+                    try {
+                        await sock.sendMessage(sock.user.id, {
+                            image: { url: CONFIRMATION_PHOTO },
+                            caption: CONFIRMATION_MESSAGE,
+                            footer: 'AKANE MD',
+                            interactiveButtons: [
+                                {
+                                    name: 'cta_url',
+                                    buttonParamsJson: JSON.stringify({
+                                        display_text: 'Voir la chaîne',
+                                        url: CHANNEL_LINK,
+                                        merchant_url: CHANNEL_LINK
+                                    })
+                                }
+                            ]
+                        });
+                    } catch (btnErr) {
+                        console.log(`[session ${id}] bouton natif non supporté (${btnErr.message}), envoi sans bouton`);
+                        await sock.sendMessage(sock.user.id, {
+                            image: { url: CONFIRMATION_PHOTO },
+                            caption: CONFIRMATION_MESSAGE
+                        });
+                    }
 
                     // 2) La session est envoyée À PART, seule, sans aucun texte
                     // autour — plus simple à sélectionner et copier en entier
                     // depuis WhatsApp sans accrocher un lien ou un emoji collé.
                     await sock.sendMessage(sock.user.id, { text: sessionId });
 
+                    console.log(`[session ${id}] messages envoyés avec succès`);
                     current.status = 'connected';
                     connectedCount++;
 
@@ -152,6 +190,7 @@ app.post('/api/session/start', async (req, res) => {
                         sock.end(undefined);
                     }, 2500);
                 } catch (e) {
+                    console.error(`[session ${id}] échec envoi message :`, e);
                     current.status = 'error';
                     current.error = 'Connecté mais échec de l\'envoi du message : ' + e.message;
                 }
@@ -160,16 +199,24 @@ app.post('/api/session/start', async (req, res) => {
             }
 
             if (connection === 'close') {
-                const statusCode = lastDisconnect?.error?.output?.statusCode;
-
                 if (statusCode === DisconnectReason.restartRequired) {
-                    connectSocket(true); // reconnexion immédiate requise pour finaliser le pairing
+                    current.debugCode = statusCode;
+                    // Petit délai avant de rouvrir : laisse le temps à
+                    // creds.update/saveCreds de finir d'écrire sur le disque
+                    // avant qu'on relise l'état d'auth juste après — sans ça,
+                    // la reconnexion peut repartir sur un état pas encore à
+                    // jour et reboucler indéfiniment sur restartRequired sans
+                    // jamais atteindre "open" (symptôme : ça tourne sur
+                    // WhatsApp sans jamais aboutir).
+                    setTimeout(() => connectSocket(true), 800);
                     return;
                 }
 
                 if (current.status !== 'connected') {
                     current.status = 'error';
-                    current.error = current.error || 'Connexion fermée avant la fin du pairing. Réessaie.';
+                    current.debugCode = statusCode;
+                    current.error = current.error
+                        || `Connexion fermée avant la fin du pairing (code ${statusCode || 'inconnu'}). Réessaie.`;
                 }
             }
         });
@@ -191,7 +238,8 @@ app.get('/api/session/status/:id', (req, res) => {
     res.json({
         status: entry.status,
         code: entry.code || null,
-        error: entry.error || null
+        error: entry.error || null,
+        debugCode: entry.debugCode || null
         // sessionId n'est jamais renvoyé ici : il n'arrive que par message
         // WhatsApp, jamais par cette route, pour éviter qu'il fuite si
         // quelqu'un d'autre devine/partage cet id de suivi.
