@@ -7,8 +7,27 @@ import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import pino from 'pino';
-import makeWASocket, { useMultiFileAuthState, DisconnectReason, Browsers } from 'baileys';
+import makeWASocket, { useMultiFileAuthState, DisconnectReason, Browsers, fetchLatestBaileysVersion } from 'baileys';
 import fs from 'fs';
+
+// Récupérée une seule fois au démarrage du serveur et réutilisée pour toutes
+// les sessions — c'est ce qui manquait avant. Sans version explicite,
+// Baileys peut se connecter avec une version de protocole périmée : la
+// connexion réussit en apparence, mais WhatsApp rejette ensuite l'envoi de
+// messages en silence (aucune exception côté Node), ce qui donnait
+// exactement le symptôme "connecté mais jamais de message".
+let cachedWAVersion = null;
+async function getWAVersion() {
+    if (cachedWAVersion) return cachedWAVersion;
+    try {
+        const { version } = await fetchLatestBaileysVersion();
+        cachedWAVersion = version;
+        console.log('📱 Version Baileys/WhatsApp utilisée :', version.join('.'));
+    } catch (e) {
+        console.error('⚠️ Impossible de récupérer la dernière version WA, on utilise celle par défaut de Baileys.');
+    }
+    return cachedWAVersion;
+}
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -96,11 +115,34 @@ app.post('/api/session/start', async (req, res) => {
     // indéfiniment, ce qui était le bug précédent.
     async function connectSocket(isReconnect = false) {
         const { state, saveCreds } = await useMultiFileAuthState(authDir);
+        const version = await getWAVersion();
         const sock = makeWASocket({
+            ...(version ? { version } : {}),
             auth: state,
             printQRInTerminal: false,
             logger: pino({ level: 'silent' }),
-            browser: Browsers.ubuntu('Chrome')
+            browser: Browsers.ubuntu('Chrome'),
+            markOnlineOnConnect: true,
+            keepAliveIntervalMs: 10000,
+            connectTimeoutMs: 60000,
+            // Requis pour que certains messages (dont les boutons interactifs)
+            // soient acceptés par WhatsApp au lieu d'être silencieusement
+            // ignorés — repris tel quel du bot qui fonctionne.
+            getMessage: async () => ({ conversation: '' }),
+            patchMessageBeforeSending: (msg) => {
+                const requiresPatch = !!(msg.buttonsMessage || msg.listMessage || msg.templateMessage || msg.interactiveMessage);
+                if (requiresPatch) {
+                    msg = {
+                        viewOnceMessage: {
+                            message: {
+                                messageContextInfo: { deviceListMetadataVersion: 2, deviceListMetadata: {} },
+                                ...msg
+                            }
+                        }
+                    };
+                }
+                return msg;
+            }
         });
 
         const entry = sessions.get(id);
