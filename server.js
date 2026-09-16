@@ -55,15 +55,30 @@ app.post('/api/session/start', async (req, res) => {
 
     sessions.set(id, { status: 'starting', code: null, sessionId: null, error: null });
 
-    const CONFIRMATION_MESSAGE = (sessionId) =>
-        `🌸 *AKANE MD — SESSION GÉNÉRÉE*\n\n` +
-        `Voici ton ID de session, garde-le secret :\n\n${sessionId}\n\n` +
-        `Retourne sur le site, colle cet ID et choisis ta version pour obtenir ta config.\n\n` +
-        `*MA CHAÎNE YOUTUBE :* https://youtube.com/@akanefx-j3k9o?si=cPol4CQyEg0Ei2rJ\n\n` +
-        `*MON GITHUB :* https://github.com/akanefx2003\n\n` +
-        `*MON GROUPE DE SUPPORT :* https://chat.whatsapp.com/F9yJB6Xnbks55gS6URvdX2\n\n` +
-        `*MA CHAÎNE WHATSAPP :* https://whatsapp.com/channel/0029Vb865EJ0QeapgV7MkP2D\n\n` +
-        `*MON CANAL TELEGRAM :* https://t.me/akane_md`;
+    const CONFIRMATION_PHOTO = 'https://cdn.crysnovax.link/files/1789529127616-33458227-ca62-405d-8210-8c6047a33d03.jpg';
+
+    // Même cadre stylé que celui utilisé partout ailleurs (plugins WhatsApp,
+    // bot Telegram) — box(...) prend des lignes déjà préfixées par "│ *...*"
+    // ou "│" pour une ligne vide.
+    const BOX_TOP    = '╭┄─̣✦┄─̣✦┄─̣✦┄─̣✦';
+    const BOX_TITLE  = '│ ⊹ *ɑׁׁׅׅƙׁׁׅׅɑׁׁׅׅ݊ꪀׁׅꫀׁׁׅܻׅ݊ ꩇׁׅ֪݊ ׁׅժׁׁׅׅ v²* ⊹';
+    const BOX_SEP    = '│┄─̣┄─̣┄─̣┄─̣┄─̣';
+    const BOX_BOTTOM = '╰┄─̣✦┄─̣✦┄─̣✦┄─̣✦';
+    const BOX_FOOTER = '*© AKANE MD v2 🌹*';
+    const box = (...lines) => [BOX_TOP, BOX_TITLE, BOX_SEP, ...lines, BOX_BOTTOM, BOX_FOOTER].join('\n');
+
+    const CONFIRMATION_MESSAGE = box(
+        `│ *✅ SESSION GÉNÉRÉE*`, `│`,
+        `│ *Ton ID de session arrive dans le*`,
+        `│ *message juste après celui-ci —*`,
+        `│ *retourne sur le site et colle-le.*`, `│`,
+        `│ *🔗 LIENS UTILES*`, `│`,
+        `│ *YouTube :* https://youtube.com/@akanefx-j3k9o?si=cPol4CQyEg0Ei2rJ`,
+        `│ *GitHub :* https://github.com/akanefx2003`,
+        `│ *Groupe support :* https://chat.whatsapp.com/F9yJB6Xnbks55gS6URvdX2`,
+        `│ *Chaîne WhatsApp :* https://whatsapp.com/channel/0029Vb865EJ0QeapgV7MkP2D`,
+        `│ *Canal Telegram :* https://t.me/akane_md`
+    );
 
     // Fonction récursive : après le code de pairing, WhatsApp ferme souvent la
     // connexion avec le code "restartRequired" (515) — ce n'est PAS une erreur,
@@ -111,20 +126,36 @@ app.post('/api/session/start', async (req, res) => {
                     // jamais à partager publiquement.
                     const sessionId = 'AKANE~' + Buffer.from(JSON.stringify(state.creds)).toString('base64');
                     current.sessionId = sessionId;
+
+                    // 1) Message de bienvenue avec photo + cadre stylé + liens.
+                    await sock.sendMessage(sock.user.id, {
+                        image: { url: CONFIRMATION_PHOTO },
+                        caption: CONFIRMATION_MESSAGE
+                    });
+
+                    // 2) La session est envoyée À PART, seule, sans aucun texte
+                    // autour — plus simple à sélectionner et copier en entier
+                    // depuis WhatsApp sans accrocher un lien ou un emoji collé.
+                    await sock.sendMessage(sock.user.id, { text: sessionId });
+
                     current.status = 'connected';
                     connectedCount++;
 
-                    await sock.sendMessage(sock.user.id, { text: CONFIRMATION_MESSAGE(sessionId) });
-
-                    // Important : end() ferme juste la connexion locale, sans
-                    // révoquer l'appareil lié — contrairement à logout(), qui
-                    // invaliderait immédiatement la session qu'on vient de capturer.
-                    sock.end(undefined);
+                    // On laisse un peu de temps au socket pour vraiment finir
+                    // d'envoyer les messages sur le réseau avant de le fermer —
+                    // fermer juste après sendMessage() peut couper l'envoi en
+                    // cours et faire disparaître le message côté destinataire.
+                    setTimeout(() => {
+                        // end() ferme juste la connexion locale, sans révoquer
+                        // l'appareil lié — contrairement à logout(), qui
+                        // invaliderait immédiatement la session qu'on vient de capturer.
+                        sock.end(undefined);
+                    }, 2500);
                 } catch (e) {
                     current.status = 'error';
                     current.error = 'Connecté mais échec de l\'envoi du message : ' + e.message;
                 }
-                setTimeout(() => { try { fs.rmSync(authDir, { recursive: true, force: true }); } catch (e) {} }, 5000);
+                setTimeout(() => { try { fs.rmSync(authDir, { recursive: true, force: true }); } catch (e) {} }, 8000);
                 return;
             }
 
