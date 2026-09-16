@@ -55,45 +55,53 @@ app.post('/api/session/start', async (req, res) => {
 
     sessions.set(id, { status: 'starting', code: null, sessionId: null, error: null });
 
-    try {
+    const CONFIRMATION_MESSAGE = (sessionId) =>
+        `🌸 *AKANE MD — SESSION GÉNÉRÉE*\n\n` +
+        `Voici ton ID de session, garde-le secret :\n\n${sessionId}\n\n` +
+        `Retourne sur le site, colle cet ID et choisis ta version pour obtenir ta config.\n\n` +
+        `*MA CHAÎNE YOUTUBE :* https://youtube.com/@akanefx-j3k9o?si=cPol4CQyEg0Ei2rJ\n\n` +
+        `*MON GITHUB :* https://github.com/akanefx2003\n\n` +
+        `*MON GROUPE DE SUPPORT :* https://chat.whatsapp.com/F9yJB6Xnbks55gS6URvdX2\n\n` +
+        `*MA CHAÎNE WHATSAPP :* https://whatsapp.com/channel/0029Vb865EJ0QeapgV7MkP2D\n\n` +
+        `*MON CANAL TELEGRAM :* https://t.me/akane_md`;
+
+    // Fonction récursive : après le code de pairing, WhatsApp ferme souvent la
+    // connexion avec le code "restartRequired" (515) — ce n'est PAS une erreur,
+    // c'est une étape normale du flow qui attend une seconde connexion
+    // immédiate avec le même état d'authentification pour finaliser le
+    // pairing. Sans ce rappel, le téléphone reste bloqué sur "Connexion..."
+    // indéfiniment, ce qui était le bug précédent.
+    async function connectSocket(isReconnect = false) {
         const { state, saveCreds } = await useMultiFileAuthState(authDir);
         const sock = makeWASocket({
             auth: state,
             printQRInTerminal: false,
             logger: pino({ level: 'silent' }),
-            // Un fingerprint "maison" (['AKANE MD','Chrome','1.0']) fait souvent
-            // échouer la connexion juste après avoir entré le code de pairing —
-            // WhatsApp le rejette silencieusement. Browsers.ubuntu('Chrome') est
-            // un fingerprint standard connu pour fonctionner de façon fiable
-            // avec la méthode par code (contrairement au QR, plus permissif).
             browser: Browsers.ubuntu('Chrome')
         });
 
-        sessions.get(id).sock = sock;
+        const entry = sessions.get(id);
+        if (!entry) return;
+        entry.sock = sock;
         sock.ev.on('creds.update', saveCreds);
 
-        // Le code de pairing ne peut être demandé qu'une fois le socket ouvert
-        // côté réseau ; on ne peut pas l'obtenir avant un court délai.
-        if (!state.creds.registered) {
+        if (!isReconnect && !state.creds.registered) {
             setTimeout(async () => {
                 try {
-                    // Code personnalisé fixe plutôt que le code aléatoire généré
-                    // par WhatsApp — Baileys accepte un 2e argument à
-                    // requestPairingCode() pour ça (8 caractères alphanumériques).
                     const code = await sock.requestPairingCode(number, 'AKANEMD9');
-                    const entry = sessions.get(id);
-                    if (entry) { entry.code = code; entry.status = 'code_ready'; }
-                } catch (e) {
-                    const entry = sessions.get(id);
-                    if (entry) { entry.status = 'error'; entry.error = 'Impossible de générer le code : ' + e.message; }
+                    const e = sessions.get(id);
+                    if (e) { e.code = code; e.status = 'code_ready'; }
+                } catch (err) {
+                    const e = sessions.get(id);
+                    if (e) { e.status = 'error'; e.error = 'Impossible de générer le code : ' + err.message; }
                 }
             }, 1500);
         }
 
         sock.ev.on('connection.update', async (update) => {
             const { connection, lastDisconnect } = update;
-            const entry = sessions.get(id);
-            if (!entry) return;
+            const current = sessions.get(id);
+            if (!current) return;
 
             if (connection === 'open') {
                 try {
@@ -102,33 +110,42 @@ app.post('/api/session/start', async (req, res) => {
                     // propriétaire du numéro : à traiter comme un mot de passe,
                     // jamais à partager publiquement.
                     const sessionId = 'AKANE~' + Buffer.from(JSON.stringify(state.creds)).toString('base64');
-                    entry.sessionId = sessionId;
-                    entry.status = 'connected';
+                    current.sessionId = sessionId;
+                    current.status = 'connected';
                     connectedCount++;
 
-                    await sock.sendMessage(sock.user.id, {
-                        text: `🌸 *AKANE MD — SESSION GÉNÉRÉE*\n\nVoici ton ID de session, garde-le secret :\n\n${sessionId}\n\nRetourne sur le site, colle cet ID et choisis ta version pour obtenir ta config.`
-                    });
+                    await sock.sendMessage(sock.user.id, { text: CONFIRMATION_MESSAGE(sessionId) });
 
                     // Important : end() ferme juste la connexion locale, sans
                     // révoquer l'appareil lié — contrairement à logout(), qui
                     // invaliderait immédiatement la session qu'on vient de capturer.
                     sock.end(undefined);
                 } catch (e) {
-                    entry.status = 'error';
-                    entry.error = 'Connecté mais échec de l\'envoi du message : ' + e.message;
+                    current.status = 'error';
+                    current.error = 'Connecté mais échec de l\'envoi du message : ' + e.message;
                 }
                 setTimeout(() => { try { fs.rmSync(authDir, { recursive: true, force: true }); } catch (e) {} }, 5000);
+                return;
             }
 
             if (connection === 'close') {
-                const shouldRetryInfo = lastDisconnect?.error?.output?.statusCode;
-                if (entry.status !== 'connected' && shouldRetryInfo !== DisconnectReason.restartRequired) {
-                    entry.status = entry.status === 'error' ? entry.status : 'error';
-                    entry.error = entry.error || 'Connexion fermée avant la fin du pairing. Réessaie.';
+                const statusCode = lastDisconnect?.error?.output?.statusCode;
+
+                if (statusCode === DisconnectReason.restartRequired) {
+                    connectSocket(true); // reconnexion immédiate requise pour finaliser le pairing
+                    return;
+                }
+
+                if (current.status !== 'connected') {
+                    current.status = 'error';
+                    current.error = current.error || 'Connexion fermée avant la fin du pairing. Réessaie.';
                 }
             }
         });
+    }
+
+    try {
+        await connectSocket(false);
     } catch (e) {
         sessions.set(id, { status: 'error', error: e.message });
     }
