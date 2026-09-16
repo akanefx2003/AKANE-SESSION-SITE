@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AKANE MD — Générateur de session</title>
+<style>
+  :root {
+    --bg: #140b18;
+    --surface: #1e1224;
+    --surface-2: #281731;
+    --border: #3a2244;
+    --text: #f5eef2;
+    --text-dim: #b8a5c2;
+    --accent: #ff4d7e;
+    --accent-dim: #b3335a;
+    --success: #25d366;
+    --mono: 'JetBrains Mono', 'Courier New', monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: radial-gradient(circle at 50% -10%, #2a1530, var(--bg) 55%);
+    color: var(--text);
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    min-height: 100vh;
+    padding-bottom: 60px;
+  }
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 20px 24px;
+    border-bottom: 1px solid var(--border);
+  }
+  .logo { font-size: 20px; font-weight: 800; letter-spacing: 0.5px; }
+  .logo span { color: var(--accent); }
+  nav { display: flex; gap: 24px; }
+  nav button {
+    background: none; border: none; color: var(--text-dim);
+    font-size: 14px; font-weight: 600; cursor: pointer; padding: 6px 0;
+    border-bottom: 2px solid transparent;
+  }
+  nav button.active { color: var(--accent); border-color: var(--accent); }
+
+  main { max-width: 560px; margin: 0 auto; padding: 40px 20px; }
+  .tab { display: none; }
+  .tab.active { display: block; }
+
+  .hero-title {
+    font-size: 44px; font-weight: 900; letter-spacing: -1px;
+    line-height: 1.05; margin-bottom: 14px;
+  }
+  .hero-title .accent { color: var(--accent); }
+  .hero-sub { color: var(--text-dim); font-size: 15px; line-height: 1.6; margin-bottom: 32px; }
+
+  .btn {
+    display: inline-block; width: 100%; text-align: center;
+    padding: 15px 20px; border-radius: 10px; border: none;
+    font-size: 15px; font-weight: 700; cursor: pointer;
+    transition: transform 0.15s ease;
+  }
+  .btn:active { transform: scale(0.98); }
+  .btn-primary { background: var(--accent); color: #1a0a10; }
+  .btn-ghost { background: transparent; border: 1px solid var(--border); color: var(--text); }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn-row { display: flex; gap: 10px; margin-top: 10px; }
+  .btn-row .btn { width: auto; flex: 1; }
+
+  .stepper { display: flex; align-items: center; gap: 6px; margin-bottom: 28px; }
+  .step-dot {
+    width: 8px; height: 8px; border-radius: 50%; background: var(--border);
+  }
+  .step-dot.done { background: var(--success); }
+  .step-dot.current { background: var(--accent); width: 22px; border-radius: 4px; }
+  .step-line { flex: 1; height: 1px; background: var(--border); }
+
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 14px; padding: 24px; margin-bottom: 16px;
+  }
+  .field-label { font-size: 12px; color: var(--text-dim); margin-bottom: 8px; display: block; }
+  .field {
+    display: flex; align-items: center; gap: 8px;
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 10px; padding: 4px 14px;
+  }
+  .field input, .field select {
+    flex: 1; background: none; border: none; color: var(--text);
+    font-size: 16px; padding: 12px 0; font-family: var(--mono);
+  }
+  .field input:focus, .field select:focus { outline: none; }
+  .field-prefix { color: var(--text-dim); font-family: var(--mono); }
+  textarea.session-input {
+    width: 100%; min-height: 90px; background: var(--surface-2);
+    border: 1px solid var(--border); border-radius: 10px; color: var(--text);
+    font-family: var(--mono); font-size: 13px; padding: 12px; resize: vertical;
+  }
+
+  .code-display {
+    text-align: center; font-family: var(--mono); font-size: 32px;
+    letter-spacing: 6px; font-weight: 800; color: var(--accent);
+    padding: 24px 0; word-break: break-all;
+  }
+  .status-line { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-dim); }
+  .dot-pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); animation: pulse 1.2s infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+  .version-choice { display: flex; gap: 10px; margin-top: 8px; }
+  .version-choice button {
+    flex: 1; padding: 14px; border-radius: 10px; border: 1px solid var(--border);
+    background: var(--surface-2); color: var(--text); font-weight: 700; cursor: pointer;
+  }
+  .version-choice button.selected { border-color: var(--accent); color: var(--accent); }
+
+  .config-box {
+    background: #0d0710; border: 1px solid var(--border); border-radius: 10px;
+    padding: 16px; font-family: var(--mono); font-size: 13px; white-space: pre-wrap;
+    word-break: break-all; margin-bottom: 12px;
+  }
+  .error-box { color: #ff8fa8; font-size: 13px; margin-top: 10px; }
+  .hint { font-size: 12px; color: var(--text-dim); margin-top: 6px; line-height: 1.5; }
+
+  .deploy-card {
+    display: flex; align-items: center; gap: 16px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 14px; padding: 20px; margin-bottom: 14px;
+  }
+  .deploy-icon { font-size: 28px; }
+  .deploy-info { flex: 1; }
+  .deploy-info b { display: block; font-size: 15px; margin-bottom: 4px; }
+  .deploy-info span { font-size: 12px; color: var(--text-dim); }
+  .deploy-card a {
+    color: var(--accent); font-size: 13px; font-weight: 700; text-decoration: none;
+  }
+
+  .steps-list { list-style: none; margin-top: 10px; }
+  .steps-list li {
+    font-size: 13px; color: var(--text-dim); padding: 6px 0 6px 22px; position: relative;
+  }
+  .steps-list li:before {
+    content: counter(li); counter-increment: li;
+    position: absolute; left: 0; top: 6px;
+    width: 16px; height: 16px; border-radius: 50%; background: var(--surface-2);
+    color: var(--accent); font-size: 10px; font-weight: 800;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .steps-list { counter-reset: li; }
+
+  .stats-row { display: flex; gap: 20px; margin-top: 32px; }
+  .stat-block b { display: block; font-size: 28px; color: var(--accent); font-family: var(--mono); }
+  .stat-block span { font-size: 12px; color: var(--text-dim); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">AKANE <span>SESSION</span></div>
+  <nav>
+    <button data-tab="accueil" class="active">Accueil</button>
+    <button data-tab="session">Session</button>
+    <button data-tab="deployer">Déployer</button>
+  </nav>
+</header>
+
+<main>
+
+  <!-- ACCUEIL -->
+  <section class="tab active" id="tab-accueil">
+    <div class="hero-title">Ta session<br>WhatsApp, <span class="accent">prête<br>à déployer</span>.</div>
+    <p class="hero-sub">Connecte ton numéro, récupère ton ID de session directement dans WhatsApp, colle-le ici : on te génère la config exacte pour AKANE MD v1 ou v2.</p>
+    <button class="btn btn-primary" onclick="goTo('session')">Créer une session</button>
+    <div style="margin-top:14px">
+      <button class="btn btn-ghost" onclick="goTo('deployer')">Voir les guides d'hébergement</button>
+    </div>
+    <div style="margin-top:14px">
+      <a class="btn btn-ghost" id="githubLink" href="https://github.com/TON-USER/TON-REPO" target="_blank" rel="noopener" style="display:block;text-decoration:none;text-align:center">GitHub</a>
+    </div>
+    <div class="stats-row">
+      <div class="stat-block">
+        <b id="statConnected">0</b>
+        <span>sessions générées</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- SESSION -->
+  <section class="tab" id="tab-session">
+
+    <div class="stepper">
+      <div class="step-dot" id="dot-1"></div><div class="step-line"></div>
+      <div class="step-dot" id="dot-2"></div><div class="step-line"></div>
+      <div class="step-dot" id="dot-3"></div>
+    </div>
+
+    <!-- Étape 1 : numéro -->
+    <div id="step-number">
+      <div class="card">
+        <span class="field-label">NUMÉRO WHATSAPP</span>
+        <div class="field">
+          <span class="field-prefix">+</span>
+          <input id="numberInput" type="tel" placeholder="221701234567" inputmode="numeric">
+        </div>
+        <p class="hint">Indicatif du pays inclus, sans le +. Exemple : 221701234567</p>
+      </div>
+      <button class="btn btn-primary" onclick="startSession()">Générer le code</button>
+      <div class="error-box" id="numberError"></div>
+    </div>
+
+    <!-- Étape 2 : code + attente -->
+    <div id="step-waiting" style="display:none">
+      <div class="card">
+        <p class="hint" style="margin-bottom:10px">Sur WhatsApp : Paramètres → Appareils connectés → Connecter un appareil → Se connecter avec un numéro de téléphone. Entre ce code :</p>
+        <div class="code-display" id="pairCode">••••••••</div>
+        <div class="status-line"><span class="dot-pulse"></span><span id="waitStatus">En attente de connexion...</span></div>
+      </div>
+      <div class="error-box" id="waitError"></div>
+    </div>
+
+    <!-- Étape 3 : coller session + version -->
+    <div id="step-paste" style="display:none">
+      <div class="card">
+        <p class="hint" style="margin-bottom:14px">✅ Connecté ! Va voir tes messages WhatsApp (message de toi-même) : tu y trouveras ton ID de session. Colle-le ici.</p>
+        <span class="field-label">ID DE SESSION</span>
+        <textarea class="session-input" id="sessionInput" placeholder="AKANE~..."></textarea>
+
+        <div style="margin-top:18px">
+          <span class="field-label">VERSION DU BOT</span>
+          <div class="version-choice">
+            <button data-v="v1" onclick="selectVersion('v1')">AKANE MD v1</button>
+            <button data-v="v2" onclick="selectVersion('v2')">AKANE MD v2</button>
+          </div>
+        </div>
+      </div>
+      <button class="btn btn-primary" id="buildBtn" disabled onclick="buildConfig()">Générer la config</button>
+      <div class="error-box" id="pasteError"></div>
+    </div>
+
+    <!-- Résultat -->
+    <div id="step-result" style="display:none">
+      <div class="card">
+        <span class="field-label">CONFIG GÉNÉRÉE</span>
+        <div class="config-box" id="configOutput"></div>
+        <button class="btn btn-ghost" onclick="copyConfig()">Copier</button>
+      </div>
+      <button class="btn btn-primary" onclick="goTo('deployer')">Voir où l'héberger</button>
+    </div>
+
+  </section>
+
+  <!-- DÉPLOYER -->
+  <section class="tab" id="tab-deployer">
+    <div class="hero-title" style="font-size:30px;margin-bottom:24px">Héberge ton bot</div>
+
+    <div class="deploy-card">
+      <div class="deploy-icon">☁️</div>
+      <div class="deploy-info">
+        <b>Bot-Hosting.net</b>
+        <span>Hébergement gratuit orienté bots Discord/WhatsApp</span>
+      </div>
+    </div>
+    <ol class="steps-list">
+      <li>Crée un serveur Node.js sur Bot-Hosting.net</li>
+      <li>Upload les fichiers de ton repo AKANE MD (v1 ou v2)</li>
+      <li>Ajoute la variable <code>SESSION_ID</code> avec la config générée</li>
+      <li>Démarre le serveur</li>
+    </ol>
+
+    <div class="deploy-card" style="margin-top:24px">
+      <div class="deploy-icon">🚀</div>
+      <div class="deploy-info">
+        <b>Katabump</b>
+        <span>Panel d'hébergement Pterodactyl gratuit</span>
+      </div>
+    </div>
+    <ol class="steps-list">
+      <li>Crée un serveur Node.js sur Katabump</li>
+      <li>Upload ou clone ton repo dans le serveur</li>
+      <li>Ajoute <code>SESSION_ID</code> dans les variables de démarrage</li>
+      <li>Lance le serveur (bouton Start)</li>
+    </ol>
+
+    <div class="deploy-card" style="margin-top:24px">
+      <div class="deploy-icon">🏠</div>
+      <div class="deploy-info">
+        <b>Téo Héberg</b>
+        <span>Ton panel personnel (teoheberg.fr)</span>
+      </div>
+    </div>
+    <ol class="steps-list">
+      <li>Va sur ton panel teoheberg.fr</li>
+      <li>Colle <code>SESSION_ID</code> dans les variables d'environnement du service</li>
+      <li>Redémarre le service</li>
+    </ol>
+  </section>
+
+</main>
+
+<script>
+const tabs = document.querySelectorAll('.tab');
+const navButtons = document.querySelectorAll('nav button');
+
+function goTo(name) {
+  tabs.forEach(t => t.classList.toggle('active', t.id === 'tab-' + name));
+  navButtons.forEach(b => b.classList.toggle('active', b.dataset.tab === name));
+}
+navButtons.forEach(b => b.addEventListener('click', () => goTo(b.dataset.tab)));
+
+function setStep(n) {
+  for (let i = 1; i <= 3; i++) {
+    const dot = document.getElementById('dot-' + i);
+    dot.className = 'step-dot' + (i < n ? ' done' : i === n ? ' current' : '');
+  }
+}
+
+let currentSessionRequestId = null;
+let pollTimer = null;
+let selectedVersion = null;
+let lastConfig = '';
+
+async function startSession() {
+  const number = document.getElementById('numberInput').value.replace(/\\D/g, '');
+  const errBox = document.getElementById('numberError');
+  errBox.textContent = '';
+
+  if (number.length < 7) {
+    errBox.textContent = 'Numéro invalide.';
+    return;
+  }
+
+  try {
+    const res = await fetch('/api/session/start', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ number })
+    });
+    const data = await res.json();
+    if (data.error) { errBox.textContent = data.error; return; }
+
+    currentSessionRequestId = data.id;
+    document.getElementById('step-number').style.display = 'none';
+    document.getElementById('step-waiting').style.display = 'block';
+    setStep(1);
+    pollStatus();
+  } catch (e) {
+    errBox.textContent = 'Erreur réseau : ' + e.message;
+  }
+}
+
+function pollStatus() {
+  clearInterval(pollTimer);
+  pollTimer = setInterval(async () => {
+    try {
+      const res = await fetch('/api/session/status/' + currentSessionRequestId);
+      const data = await res.json();
+
+      if (data.error) {
+        document.getElementById('waitError').textContent = data.error;
+        clearInterval(pollTimer);
+        return;
+      }
+
+      if (data.code) {
+        document.getElementById('pairCode').textContent = data.code;
+      }
+
+      if (data.status === 'connected') {
+        clearInterval(pollTimer);
+        document.getElementById('waitStatus').textContent = 'Connecté !';
+        setTimeout(() => {
+          document.getElementById('step-waiting').style.display = 'none';
+          document.getElementById('step-paste').style.display = 'block';
+          setStep(2);
+        }, 800);
+      }
+
+      if (data.status === 'error') {
+        document.getElementById('waitError').textContent = data.error || 'Une erreur est survenue.';
+        clearInterval(pollTimer);
+      }
+    } catch (e) { /* on retente au prochain cycle */ }
+  }, 1500);
+}
+
+function selectVersion(v) {
+  selectedVersion = v;
+  document.querySelectorAll('.version-choice button').forEach(b => {
+    b.classList.toggle('selected', b.dataset.v === v);
+  });
+  checkPasteReady();
+}
+
+document.getElementById('sessionInput').addEventListener('input', checkPasteReady);
+
+function checkPasteReady() {
+  const val = document.getElementById('sessionInput').value.trim();
+  document.getElementById('buildBtn').disabled = !(val.startsWith('AKANE~') && selectedVersion);
+}
+
+async function buildConfig() {
+  const sessionId = document.getElementById('sessionInput').value.trim();
+  const errBox = document.getElementById('pasteError');
+  errBox.textContent = '';
+
+  try {
+    const res = await fetch('/api/config/build', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, version: selectedVersion })
+    });
+    const data = await res.json();
+    if (data.error) { errBox.textContent = data.error; return; }
+
+    lastConfig = data.config;
+    document.getElementById('configOutput').textContent = data.config;
+    document.getElementById('step-paste').style.display = 'none';
+    document.getElementById('step-result').style.display = 'block';
+    setStep(3);
+  } catch (e) {
+    errBox.textContent = 'Erreur réseau : ' + e.message;
+  }
+}
+
+function copyConfig() {
+  navigator.clipboard.writeText(lastConfig);
+}
+
+async function loadStats() {
+  try {
+    const res = await fetch('/api/stats');
+    const data = await res.json();
+    document.getElementById('statConnected').textContent = data.connected;
+  } catch (e) { /* pas grave si ça échoue, on garde 0 affiché */ }
+}
+loadStats();
+</script>
+
+</body>
+</html>
