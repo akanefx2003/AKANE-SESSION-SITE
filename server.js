@@ -7,7 +7,7 @@ import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import pino from 'pino';
-import makeWASocket, { useMultiFileAuthState, DisconnectReason } from 'baileys';
+import makeWASocket, { useMultiFileAuthState, DisconnectReason, Browsers } from 'baileys';
 import fs from 'fs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -61,7 +61,12 @@ app.post('/api/session/start', async (req, res) => {
             auth: state,
             printQRInTerminal: false,
             logger: pino({ level: 'silent' }),
-            browser: ['AKANE MD', 'Chrome', '1.0']
+            // Un fingerprint "maison" (['AKANE MD','Chrome','1.0']) fait souvent
+            // échouer la connexion juste après avoir entré le code de pairing —
+            // WhatsApp le rejette silencieusement. Browsers.ubuntu('Chrome') est
+            // un fingerprint standard connu pour fonctionner de façon fiable
+            // avec la méthode par code (contrairement au QR, plus permissif).
+            browser: Browsers.ubuntu('Chrome')
         });
 
         sessions.get(id).sock = sock;
@@ -72,7 +77,10 @@ app.post('/api/session/start', async (req, res) => {
         if (!state.creds.registered) {
             setTimeout(async () => {
                 try {
-                    const code = await sock.requestPairingCode(number);
+                    // Code personnalisé fixe plutôt que le code aléatoire généré
+                    // par WhatsApp — Baileys accepte un 2e argument à
+                    // requestPairingCode() pour ça (8 caractères alphanumériques).
+                    const code = await sock.requestPairingCode(number, 'AKANEMD9');
                     const entry = sessions.get(id);
                     if (entry) { entry.code = code; entry.status = 'code_ready'; }
                 } catch (e) {
