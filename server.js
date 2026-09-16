@@ -15,6 +15,23 @@ const app = express();
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
+// Filet de sécurité : si express.static ne sert pas index.html pour une
+// raison quelconque (dossier public/ absent du déploiement, chemin
+// différent...), cette route explicite donne un message clair au lieu du
+// générique "Cannot GET /" d'Express.
+app.get('/', (req, res) => {
+    const indexPath = path.join(__dirname, 'public', 'index.html');
+    if (fs.existsSync(indexPath)) return res.sendFile(indexPath);
+    res.status(500).send('index.html introuvable dans public/ — vérifie que ce dossier a bien été déployé (git add public/).');
+});
+
+// Compteur simple de sessions générées avec succès, réinitialisé à chaque
+// redémarrage du serveur (pas de base de données ici).
+let connectedCount = 0;
+app.get('/api/stats', (req, res) => {
+    res.json({ connected: connectedCount });
+});
+
 const TMP_DIR = path.join(__dirname, 'tmp-sessions');
 fs.mkdirSync(TMP_DIR, { recursive: true });
 
@@ -79,6 +96,7 @@ app.post('/api/session/start', async (req, res) => {
                     const sessionId = 'AKANE~' + Buffer.from(JSON.stringify(state.creds)).toString('base64');
                     entry.sessionId = sessionId;
                     entry.status = 'connected';
+                    connectedCount++;
 
                     await sock.sendMessage(sock.user.id, {
                         text: `🌸 *AKANE MD — SESSION GÉNÉRÉE*\n\nVoici ton ID de session, garde-le secret :\n\n${sessionId}\n\nRetourne sur le site, colle cet ID et choisis ta version pour obtenir ta config.`
