@@ -145,6 +145,11 @@ app.post('/api/session/start', async (req, res) => {
         `│ *1 mois sans déconnexion, v1 ou v2*`, `│`,
         `│ *Pack Premium — 2500F*`,
         `│ *1 mois, v1+v2, tous les plugins*`, `│`,
+        `│ *🎨 SERVICES SUR MESURE*`, `│`,
+        `│ *Bot personnalisé — 3000F*`,
+        `│ *Formation création de bot — 4000F*`,
+        `│ *Plugin/commande — 300F (500F perso)*`,
+        `│ *Site personnalisé — 2500F*`, `│`,
         `│ *Commander : wa.me/221705928204*`, `│`,
         `│ *🏠 HÉBERGEMENT RECOMMANDÉ*`, `│`,
         `│ *Téo Héberg (panel gratuit) :*`,
@@ -396,4 +401,368 @@ app.get('/api/session/creds/:id', (req, res) => {
 // ── Génère le config prêt à coller à partir de l'ID collé par l'utilisateur ─
 app.post('/api/config/build', (req, res) => {
   try {
-    // Nettoyage systéma
+    // Nettoyage systématique : une session très longue peut arriver ici avec
+    // des espaces/retours à la ligne accidentels glissés pendant le
+    // copier-coller (voir sanitizeSessionId plus haut) — sans ça, une session
+    // par ailleurs valide serait rejetée comme "corrompue".
+    const sessionId = sanitizeSessionId(req.body.sessionId);
+    const version = req.body.version;
+
+    if (!sessionId || !sessionId.startsWith('AKANE~')) {
+        return res.status(400).json({ error: 'ID de session invalide (doit commencer par "AKANE~").' });
+    }
+    // Le court identifiant doit correspondre à un fichier de creds réellement
+    // stocké sur ce serveur (généré à l'étape précédente).
+    const shortId = sessionId.slice('AKANE~'.length);
+    if (!/^[a-f0-9]{6,40}$/i.test(shortId) || !fs.existsSync(path.join(SESS_DIR, shortId + '.json'))) {
+        return res.status(400).json({ error: 'ID de session invalide ou introuvable sur ce serveur.' });
+    }
+
+    if (!['v1', 'v2'].includes(version)) {
+        return res.status(400).json({ error: 'Version invalide.' });
+    }
+
+    // Le numéro a été enregistré automatiquement à la génération de la
+    // session (étape précédente) — pas besoin de le redemander ici.
+    let number = '';
+    try {
+        const meta = JSON.parse(fs.readFileSync(path.join(SESS_DIR, shortId + '.meta.json'), 'utf-8'));
+        number = meta.number || '';
+    } catch (e) {
+        // Pas grave : le script généré aura juste USER_NUMBER vide à remplir à la main.
+    }
+
+    const generatorUrl = `${req.protocol}://${req.get('host')}`;
+
+    const config = version === 'v1'
+        ? `# AKANE MD v1 — variables d'environnement\nSESSION_ID=${sessionId}\n`
+        : `# AKANE MD v2 — variables d'environnement\nSESSION_ID=${sessionId}\n`;
+
+    let indexJs;
+
+    if (version === 'v1') {
+        // Script de déploiement complet AKANE MD v1 : clone le repo, configure
+        // le numéro, récupère la vraie session sur ce générateur, installe les
+        // dépendances puis démarre le bot. À coller tel quel dans un fichier
+        // index.js à la racine de l'hébergement, puis lancer `node index.js`.
+        indexJs = `const fs = require("fs");
+const path = require("path");
+const { spawn, execSync } = require("child_process");
+
+const USER_NUMBER = "${number}";
+const SESSION_ID = "${sessionId}";
+
+// ⚠️ Doit rester en ligne : le bot va chercher la vraie session ici au démarrage.
+const GENERATOR_URL = "${generatorUrl}";
+
+const GITHUB_REPO = "https://github.com/akanefx2003/AKANE_MD.git";
+
+const c = {
+    reset:  "\\x1b[0m",
+    pink:   "\\x1b[35m",
+    green:  "\\x1b[32m",
+    red:    "\\x1b[31m",
+    cyan:   "\\x1b[36m",
+    yellow: "\\x1b[33m",
+    bold:   "\\x1b[1m",
+}
+
+const ok  = (m) => console.log(\`\${c.green}  ✔  \${m}\${c.reset}\`)
+const err = (m) => console.log(\`\${c.red}  ✘  \${m}\${c.reset}\`)
+const inf = (m) => console.log(\`\${c.cyan}  ◈  \${m}\${c.reset}\`)
+
+function banner() {
+    console.clear()
+    console.log(\`\${c.pink}\${c.bold}\`)
+    console.log(\`  ┌────────────────────────────────────┐\`)
+    console.log(\`  │       🌸  AKANE MD DÉPLOIEMENT  🌸   │\`)
+    console.log(\`  └────────────────────────────────────┘\`)
+    console.log(\`\${c.reset}\`)
+}
+
+async function progress(label, fn) {
+    const frames = ['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏']
+    let i = 0
+    process.stdout.write(\`\\r\${c.yellow}  \${frames[0]}  \${label}...\${c.reset}\`)
+    const timer = setInterval(() => {
+        process.stdout.write(\`\\r\${c.yellow}  \${frames[i++ % frames.length]}  \${label}...\${c.reset}\`)
+    }, 80)
+    try {
+        const result = await fn()
+        clearInterval(timer)
+        process.stdout.write(\`\\r\${c.green}  ✔  \${label}\${c.reset}\\n\`)
+        return result
+    } catch(e) {
+        clearInterval(timer)
+        process.stdout.write(\`\\r\${c.red}  ✘  \${label}\${c.reset}\\n\`)
+        throw e
+    }
+}
+
+function clean() {
+    fs.readdirSync(__dirname).forEach(file => {
+        if (file === "index.js") return
+        try {
+            const p = path.join(__dirname, file)
+            fs.statSync(p).isDirectory()
+                ? fs.rmSync(p, { recursive: true, force: true })
+                : fs.unlinkSync(p)
+        } catch(e) {}
+    })
+}
+
+function setup() {
+    ["sessions", "data", "temp", "database"].forEach(d => {
+        fs.mkdirSync(path.join(__dirname, d), { recursive: true })
+    })
+    const cfg = path.join(__dirname, "data", "config.json")
+    if (!fs.existsSync(cfg)) {
+        fs.writeFileSync(cfg, JSON.stringify({
+            prefix: ".",
+            botName: "AKANE MD",
+            owner: USER_NUMBER,
+            reaction: "🌸",
+            channelLink: "\${CHANNEL_LINK_PLACEHOLDER}"
+        }, null, 2))
+    }
+    const ax = path.join(__dirname, "AKANEX", "akanex.js")
+    if (fs.existsSync(ax)) {
+        fs.writeFileSync(ax,
+            fs.readFileSync(ax, "utf8")
+              .replace(/phoneNumber:\\s*['"]\\d+['"]/, \`phoneNumber: '\${USER_NUMBER}'\`)
+        )
+    }
+}
+
+// Récupère la vraie session sur ce générateur et l'écrit dans sessions/creds.json
+async function saveSession() {
+    if (!SESSION_ID || !SESSION_ID.startsWith("AKANE~")) {
+        throw new Error("SESSION_ID invalide (doit commencer par 'AKANE~').")
+    }
+    const part = SESSION_ID.slice("AKANE~".length)
+    const sessDir = path.join(__dirname, "sessions")
+    fs.mkdirSync(sessDir, { recursive: true })
+
+    let creds
+    if (part.length > 40) {
+        creds = JSON.parse(Buffer.from(part, "base64").toString("utf-8"))
+    } else {
+        const res = await fetch(\`\${GENERATOR_URL}/api/session/creds/\${part}\`)
+        if (!res.ok) {
+            const body = await res.json().catch(() => ({}))
+            throw new Error("Session introuvable sur le générateur : " + (body.error || res.status))
+        }
+        creds = await res.json()
+    }
+    fs.writeFileSync(path.join(sessDir, "creds.json"), JSON.stringify(creds, null, 2))
+}
+
+function installDeps() {
+    return new Promise((resolve, reject) => {
+        const p = spawn("npm", ["install"], { stdio: "pipe", shell: true })
+        p.on("close", code => code === 0 ? resolve() : reject(new Error("npm install failed")))
+    })
+}
+
+async function startBot() {
+    inf("Démarrage d'AKANE MD...")
+    try {
+        const { default: connect } = await import("./AKANEX/akanex.js")
+        const { default: handler } = await import("./akane/akanes.js")
+        await connect(handler)
+    } catch(e) {
+        err(\`Erreur: \${e.message}\`)
+        setTimeout(startBot, 5000)
+    }
+}
+
+async function main() {
+    banner()
+    inf(\`Numéro : \${USER_NUMBER}\\n\`)
+    try {
+        await progress("Nettoyage", async () => clean())
+        await progress("Clonage GitHub", async () => execSync(\`git clone \${GITHUB_REPO} .\`, { stdio: "pipe" }))
+        await progress("Configuration", async () => setup())
+        await progress("Récupération de la session", () => saveSession())
+        await progress("Installation des dépendances", () => installDeps())
+        console.log(\`\\n\${c.pink}\${c.bold}  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\${c.reset}\`)
+        ok("Déploiement terminé — lancement du bot...\\n")
+        await startBot()
+    } catch(e) {
+        err(\`Déploiement échoué : \${e.message}\`)
+        process.exit(1)
+    }
+}
+
+main()
+`.replace('${CHANNEL_LINK_PLACEHOLDER}', CHANNEL_LINK);
+    } else {
+        // Script de déploiement complet AKANE MD v2 : clone AKANE-MD-V2 dans un
+        // sous-dossier "bot/" (le repo a son propre index.js à la racine, donc
+        // on évite de cloner directement dans "." pour ne pas écraser CE
+        // script), récupère la vraie session dans bot/sessions/main/creds.json
+        // (là où useMultiFileAuthState va la lire), installe les dépendances
+        // puis démarre le bot.
+        indexJs = `const fs = require("fs");
+const path = require("path");
+const { spawn, execSync } = require("child_process");
+
+const USER_NUMBER = "${number}";
+const SESSION_ID = "${sessionId}";
+
+// ⚠️ Doit rester en ligne : le bot va chercher la vraie session ici au démarrage.
+const GENERATOR_URL = "${generatorUrl}";
+
+const GITHUB_REPO = "https://github.com/akanefx2003/AKANE-MD-V2.git";
+const BOT_DIR = path.join(__dirname, "bot"); // sous-dossier : évite d'écraser CE script (aussi nommé index.js)
+
+const c = {
+    reset:  "\\x1b[0m",
+    pink:   "\\x1b[35m",
+    green:  "\\x1b[32m",
+    red:    "\\x1b[31m",
+    cyan:   "\\x1b[36m",
+    yellow: "\\x1b[33m",
+    bold:   "\\x1b[1m",
+}
+
+const ok  = (m) => console.log(\`\${c.green}  ✔  \${m}\${c.reset}\`)
+const err = (m) => console.log(\`\${c.red}  ✘  \${m}\${c.reset}\`)
+const inf = (m) => console.log(\`\${c.cyan}  ◈  \${m}\${c.reset}\`)
+
+function banner() {
+    console.clear()
+    console.log(\`\${c.pink}\${c.bold}\`)
+    console.log(\`  ┌────────────────────────────────────┐\`)
+    console.log(\`  │     🌸  AKANE MD v2 DÉPLOIEMENT  🌸  │\`)
+    console.log(\`  └────────────────────────────────────┘\`)
+    console.log(\`\${c.reset}\`)
+}
+
+async function progress(label, fn) {
+    const frames = ['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏']
+    let i = 0
+    process.stdout.write(\`\\r\${c.yellow}  \${frames[0]}  \${label}...\${c.reset}\`)
+    const timer = setInterval(() => {
+        process.stdout.write(\`\\r\${c.yellow}  \${frames[i++ % frames.length]}  \${label}...\${c.reset}\`)
+    }, 80)
+    try {
+        const result = await fn()
+        clearInterval(timer)
+        process.stdout.write(\`\\r\${c.green}  ✔  \${label}\${c.reset}\\n\`)
+        return result
+    } catch(e) {
+        clearInterval(timer)
+        process.stdout.write(\`\\r\${c.red}  ✘  \${label}\${c.reset}\\n\`)
+        throw e
+    }
+}
+
+function clean() {
+    fs.readdirSync(__dirname).forEach(file => {
+        if (file === "index.js") return
+        try {
+            const p = path.join(__dirname, file)
+            fs.statSync(p).isDirectory()
+                ? fs.rmSync(p, { recursive: true, force: true })
+                : fs.unlinkSync(p)
+        } catch(e) {}
+    })
+}
+
+function cloneRepo() {
+    fs.rmSync(BOT_DIR, { recursive: true, force: true })
+    execSync(\`git clone \${GITHUB_REPO} "\${BOT_DIR}"\`, { stdio: "pipe" })
+}
+
+async function saveSession() {
+    if (!SESSION_ID || !SESSION_ID.startsWith("AKANE~")) {
+        throw new Error("SESSION_ID invalide (doit commencer par 'AKANE~').")
+    }
+    const part = SESSION_ID.slice("AKANE~".length)
+    const sessDir = path.join(BOT_DIR, "sessions", "main")
+    fs.mkdirSync(sessDir, { recursive: true })
+
+    let creds
+    if (part.length > 40) {
+        creds = JSON.parse(Buffer.from(part, "base64").toString("utf-8"))
+    } else {
+        const res = await fetch(\`\${GENERATOR_URL}/api/session/creds/\${part}\`)
+        if (!res.ok) {
+            const body = await res.json().catch(() => ({}))
+            throw new Error("Session introuvable sur le générateur : " + (body.error || res.status))
+        }
+        creds = await res.json()
+    }
+    fs.writeFileSync(path.join(sessDir, "creds.json"), JSON.stringify(creds, null, 2))
+}
+
+function setupConfig() {
+    const dbDir = path.join(BOT_DIR, "database")
+    fs.mkdirSync(dbDir, { recursive: true })
+    const cfgPath = path.join(dbDir, "config.json")
+    if (!fs.existsSync(cfgPath)) {
+        fs.writeFileSync(cfgPath, JSON.stringify({
+            prefix: ".",
+            publicMode: false,
+            sudoList: [],
+            reaction: "🌹",
+            owner: USER_NUMBER
+        }, null, 2))
+    }
+}
+
+function installDeps() {
+    return new Promise((resolve, reject) => {
+        const p = spawn("npm", ["install"], { cwd: BOT_DIR, stdio: "pipe", shell: true })
+        p.on("close", code => code === 0 ? resolve() : reject(new Error("npm install failed")))
+    })
+}
+
+async function startBot() {
+    inf("Démarrage d'AKANE MD v2...")
+    process.env.OWNER_NUMBER = USER_NUMBER
+    try {
+        await import(require("url").pathToFileURL(path.join(BOT_DIR, "index.js")).href)
+    } catch(e) {
+        err(\`Erreur: \${e.message}\`)
+        setTimeout(startBot, 5000)
+    }
+}
+
+async function main() {
+    banner()
+    inf(\`Numéro : \${USER_NUMBER}\\n\`)
+    try {
+        await progress("Nettoyage", async () => clean())
+        await progress("Clonage GitHub", async () => cloneRepo())
+        await progress("Configuration", async () => setupConfig())
+        await progress("Récupération de la session", () => saveSession())
+        await progress("Installation des dépendances", () => installDeps())
+        console.log(\`\\n\${c.pink}\${c.bold}  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\${c.reset}\`)
+        ok("Déploiement terminé — lancement du bot...\\n")
+        await startBot()
+    } catch(e) {
+        err(\`Déploiement échoué : \${e.message}\`)
+        process.exit(1)
+    }
+}
+
+main()
+`;
+    }
+
+    res.json({ config, indexJs, number });
+  } catch (e) {
+    // Filet de sécurité : si quoi que ce soit plante ici, le navigateur reçoit
+    // quand même du JSON exploitable au lieu d'une page d'erreur HTML illisible.
+    console.error('❌ /api/config/build:', e);
+    res.status(500).json({ error: 'Erreur serveur : ' + e.message });
+  }
+});
+
+// Pterodactyl (ton panel) fournit souvent le port via SERVER_PORT plutôt que
+// PORT — on accepte les deux pour être sûr de se lier sur le bon port,
+// celui vers lequel le panel route réellement le trafic externe.
+const PORT = process.env.PORT || process.env.SERVER_PORT || 4000;
+app.listen(PORT, () => console.log(`🌸 Générateur de session AKANE MD -> http://localhost:${PORT}`));
