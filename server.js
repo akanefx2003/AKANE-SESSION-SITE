@@ -7,11 +7,13 @@ import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import pino from 'pino';
-// @itsliaaa/baileys (et non le paquet 'baileys' standard) : c'est ce fork qui
-// sait construire un vrai nativeFlowMessage à partir du raccourci
-// `interactiveButtons` utilisé plus bas. Avec le paquet 'baileys' de base,
-// cette propriété est silencieusement ignorée — le message part quand même,
-// mais sans bouton : c'est ce qui expliquait l'absence du native flow.
+// Paquet standard 'baileys' (pas de fork tiers). L'ancien fork @itsliaaa/baileys
+// permettait un vrai bouton natif (nativeFlowMessage) sur le message de
+// confirmation, mais provoquait des échecs de pairing ("impossible de se
+// connecter" au moment d'entrer le code) — probablement plus à jour avec le
+// protocole WhatsApp actuel. Avec le paquet standard, `interactiveButtons`
+// plus bas est silencieusement ignoré : le message part quand même, juste
+// sans bouton.
 import makeWASocket, { useMultiFileAuthState, DisconnectReason, Browsers, fetchLatestBaileysVersion } from 'baileys';
 import fs from 'fs';
 import crypto from 'crypto';
