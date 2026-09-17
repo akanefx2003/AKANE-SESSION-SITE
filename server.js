@@ -399,7 +399,7 @@ app.post('/api/config/build', (req, res) => {
         // Pas grave : le script généré aura juste USER_NUMBER vide à remplir à la main.
     }
 
-    const generatorUrl = `${req.protocol}://${req.get('host')}`;
+    const generatorUrl = 'https://akane-session-site.onrender.com';
 
     const config = version === 'v1'
         ? `# AKANE MD v1 — variables d'environnement\nSESSION_ID=${sessionId}\n`
