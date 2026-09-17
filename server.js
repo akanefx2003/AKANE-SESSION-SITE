@@ -12,7 +12,7 @@ import pino from 'pino';
 // `interactiveButtons` utilisé plus bas. Avec le paquet 'baileys' de base,
 // cette propriété est silencieusement ignorée — le message part quand même,
 // mais sans bouton : c'est ce qui expliquait l'absence du native flow.
-import makeWASocket, { useMultiFileAuthState, DisconnectReason, Browsers, fetchLatestBaileysVersion } from 'baileys';
+import makeWASocket, { useMultiFileAuthState, DisconnectReason, Browsers, fetchLatestBaileysVersion } from '@itsliaaa/baileys';
 import fs from 'fs';
 import crypto from 'crypto';
 
@@ -63,7 +63,18 @@ app.get('/api/stats', (req, res) => {
     res.json({ connected: connectedCount });
 });
 
-const TMP_DIR = path.join(__dirname, 'tmp-sessions');
+// Sur Render (et la plupart des PaaS gratuits), le disque est ÉPHÉMÈRE : tout
+// fichier écrit ici est perdu au prochain redéploiement/redémarrage — y
+// compris les vraies sessions stockées dans SESS_DIR. Si tu déploies sur
+// Render, attache un "Disk" persistant (payant) monté sur un chemin fixe
+// (ex: /data) et mets DATA_DIR=/data dans les variables d'environnement.
+// Sans ça, les bots déjà déployés perdront leur session au moindre redéploiement.
+const DATA_DIR = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : __dirname;
+if (!process.env.DATA_DIR) {
+    console.warn('⚠️  DATA_DIR non défini : les sessions seront perdues au prochain redéploiement (disque éphémère sur Render/Heroku). Voir le commentaire ci-dessus.');
+}
+
+const TMP_DIR = path.join(DATA_DIR, 'tmp-sessions');
 fs.mkdirSync(TMP_DIR, { recursive: true });
 
 // Stockage PERSISTANT des vraies creds (contrairement à TMP_DIR, jamais nettoyé
@@ -72,7 +83,7 @@ fs.mkdirSync(TMP_DIR, { recursive: true });
 // démarrage, à partir du petit identifiant. Ce serveur doit donc rester en
 // ligne en continu — s'il tombe, aucun bot déjà déployé ne pourra relire sa
 // session au prochain redémarrage.
-const SESS_DIR = path.join(__dirname, 'stored-sessions');
+const SESS_DIR = path.join(DATA_DIR, 'stored-sessions');
 fs.mkdirSync(SESS_DIR, { recursive: true });
 
 const CHANNEL_LINK = 'https://whatsapp.com/channel/0029Vb865EJ0QeapgV7MkP2D';
@@ -368,6 +379,7 @@ app.get('/api/session/creds/:id', (req, res) => {
 
 // ── Génère le config prêt à coller à partir de l'ID collé par l'utilisateur ─
 app.post('/api/config/build', (req, res) => {
+  try {
     // Nettoyage systématique : une session très longue peut arriver ici avec
     // des espaces/retours à la ligne accidentels glissés pendant le
     // copier-coller (voir sanitizeSessionId plus haut) — sans ça, une session
@@ -399,7 +411,7 @@ app.post('/api/config/build', (req, res) => {
         // Pas grave : le script généré aura juste USER_NUMBER vide à remplir à la main.
     }
 
-    const generatorUrl = 'https://akane-session-site.onrender.com';
+    const generatorUrl = `${req.protocol}://${req.get('host')}`;
 
     const config = version === 'v1'
         ? `# AKANE MD v1 — variables d'environnement\nSESSION_ID=${sessionId}\n`
@@ -489,7 +501,7 @@ function setup() {
             botName: "AKANE MD",
             owner: USER_NUMBER,
             reaction: "🌸",
-            channelLink: "${CHANNEL_LINK_PLACEHOLDER}"
+            channelLink: "\${CHANNEL_LINK_PLACEHOLDER}"
         }, null, 2))
     }
     const ax = path.join(__dirname, "AKANEX", "akanex.js")
@@ -720,10 +732,16 @@ main()
     }
 
     res.json({ config, indexJs, number });
+  } catch (e) {
+    // Filet de sécurité : si quoi que ce soit plante ici, le navigateur reçoit
+    // quand même du JSON exploitable au lieu d'une page d'erreur HTML illisible.
+    console.error('❌ /api/config/build:', e);
+    res.status(500).json({ error: 'Erreur serveur : ' + e.message });
+  }
 });
 
 // Pterodactyl (ton panel) fournit souvent le port via SERVER_PORT plutôt que
 // PORT — on accepte les deux pour être sûr de se lier sur le bon port,
 // celui vers lequel le panel route réellement le trafic externe.
-const PORT = process.env.PORT || process.env.SERVER_PORT || 3000;
+const PORT = process.env.PORT || process.env.SERVER_PORT || 4000;
 app.listen(PORT, () => console.log(`🌸 Générateur de session AKANE MD -> http://localhost:${PORT}`));
