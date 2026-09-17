@@ -12,7 +12,7 @@ import pino from 'pino';
 // `interactiveButtons` utilisé plus bas. Avec le paquet 'baileys' de base,
 // cette propriété est silencieusement ignorée — le message part quand même,
 // mais sans bouton : c'est ce qui expliquait l'absence du native flow.
-import makeWASocket, { useMultiFileAuthState, DisconnectReason, Browsers, fetchLatestBaileysVersion } from '@itsliaaa/baileys';
+import makeWASocket, { useMultiFileAuthState, DisconnectReason, Browsers, fetchLatestBaileysVersion } from 'baileys';
 import fs from 'fs';
 import crypto from 'crypto';
 
